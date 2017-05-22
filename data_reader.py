@@ -21,3 +21,5 @@ class DataReader:
     # return column data in one array
     def get_col_data(self):
         return self.data.transpose()
+
+
