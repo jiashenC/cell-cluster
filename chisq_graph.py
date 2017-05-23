@@ -1,6 +1,7 @@
 import heapq as h
 import scipy.stats as ss
 import numpy as np
+from sklearn.metrics import jaccard_similarity_score
 
 
 class ChisqGraph:
@@ -20,17 +21,26 @@ class ChisqGraph:
         chisq, chisq_prob = ss.chisquare(obs, axis=None)
         return chisq_prob
 
-    def build_graph(self, threshold=0.05):
+    def build_graph(self, threshold=0.05, jaccard=False, jaccard_threshold=0):
         graph = Graph()
         while True:
             chisq, u, v = h.heappop(self.pq)
             if abs(chisq) < threshold:
                 break
             graph.add(u, v, chisq)
-        return graph
+        if jaccard:
+            self.jaccard_preprocess(graph, jaccard_threshold)
 
-    def
-
+    def jaccard_preprocess(self, graph, threshold):
+        for i, dist, j in graph.edges:
+            jc = jaccard_similarity_score(self.data[i], self.data[j])
+            if jc < threshold:
+                graph.edges.remove((i, dist, j))
+                graph.matrix[i].remove((j, dist))
+                graph.matrix.pop(i, None)
+                graph.matrix[j].remove((i, dist))
+                graph.matrix.pop(j, None)
+        # TODO: use further jaccard to connect not directly connected components
 
 class Graph:
     def __init__(self):
