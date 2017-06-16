@@ -8,3 +8,6 @@ class Log:
     def time(self, status):
         print '%s: %f, %f' % (status, time.time(), (time.time() - self.pre))
         self.pre = time.time()
+
+    def update(self):
+        self.pre = time.time()
