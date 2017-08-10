@@ -2,9 +2,10 @@ import numpy as np
 import distance as dis
 from collections import deque
 from scipy.stats import hypergeom
+from scipy.spatial.distance import euclidean
 import igraph as ig
 import louvain
-import log
+from log import output
 
 
 class CoGraph:
@@ -12,8 +13,9 @@ class CoGraph:
     def __init__(self, data):
         self.pq = []
         self.data = data
-        # self.matrix = {}
+        self.matrix = {}
         self.graph = None
+        self.parts = None
 
     def co_test(self, i, j):
         left = self.data[i].astype(bool)
@@ -22,19 +24,22 @@ class CoGraph:
         prb = hypergeom.cdf(k, len(left), np.count_nonzero(left), np.count_nonzero(right))
         return 1 - prb
 
-    def build_graph(self, threshold=0.05, jaccard=False, jaccard_threshold=0.5):
+    def eu_test(self, i, j):
+        return euclidean(self.data[i], self.data[j])
+
+    def build_graph(self, threshold=0.05, jaccard=False, jaccard_threshold=0.5, mode='hypergeometry'):
         self.graph = Graph()
-        lg = log.Log()
-        for i in range(0, len(self.data)):
-            for j in range(i + 1, len(self.data)):
-                co_score = self.co_test(i, j)
+        count = 0
+        length = len(self.data)
+        for i in range(0, length):
+            for j in range(i + 1, length):
+                co_score = self.co_test(i, j) if mode == 'hypergeometry' else self.eu_test(i, j)
+                count += 1
                 if co_score < threshold:
-                    # self.matrix.update({(i, j): co_score})
                     self.graph.add(i, j)
-        lg.time('finish hyper geometry')
+        output('after ' + mode + ' edge: ', len(self.graph.edges))
         if jaccard:
             self.jaccard_preprocess(jaccard_threshold)
-        lg.time('finish jaccard')
 
     # use BFS to give jaccard score to each pair and non-direct connected pairs
     def jaccard_preprocess(self, threshold):
@@ -42,6 +47,7 @@ class CoGraph:
         test_edge_list = set([])
         test_vertices_list = set([])
         queue = deque([])
+        count = 0
         for x in self.graph.vertices:
             queue.append(x)
             break
@@ -50,6 +56,7 @@ class CoGraph:
             if cur in test_vertices_list:
                 continue
 
+            count += 1
             test_vertices_list.add(cur)
             neighbors = self.graph.vertices_matrix[cur]
             for node in neighbors:
@@ -57,8 +64,10 @@ class CoGraph:
                     continue
 
                 test_edge_list.add((cur, node))
-                queue.append(node)
+                if node not in test_vertices_list:
+                    queue.append(node)
                 score = dis.jaccard(self.graph.vertices_matrix[cur], self.graph.vertices_matrix[node])
+                self.matrix.update({(cur, node): score})
                 if score < threshold:
                     self.graph.vertices_matrix[cur].remove(node)
                     self.graph.vertices_matrix[node].remove(cur)
@@ -74,6 +83,7 @@ class CoGraph:
                         continue
                     test_edge_list.add((cur, second_node))
                     second_score = dis.jaccard(self.graph.vertices_matrix[cur], self.graph.vertices_matrix[second_node])
+                    self.matrix.update({(cur, second_node): second_score})
                     if second_score > threshold:
                         self.graph.vertices_matrix[cur].append(second_node)
                         self.graph.vertices_matrix[second_node].append(cur)
@@ -83,20 +93,25 @@ class CoGraph:
             if len(self.graph.vertices_matrix[vertex]) < 1:
                 self.graph.vertice.remove(vertex)
 
-    def find_partition(self):
+        output('after jaccard', len(self.graph.edges))
+
+    def find_partition(self, weight=True):
         g = ig.Graph(list(self.graph.edges))
         # use hyper geometry test as edge weights
-        # weights = []
-        # for u, v in self.graph.edges:
-        #     if (u, v) in self.matrix:
-        #         weights.append(self.matrix[(u, v)])
-        #     elif (v, u) in self.matrix:
-        #         weights.append(self.matrix[(v, u)])
-        #     else:
-        #         weights.append(self.co_test(u, v))
-        # g.es['weight'] = weights
-        parts = louvain.find_partition(g, method='Modularity')
-        print parts
+        weights = []
+        for u, v in self.graph.edges:
+            if (u, v) in self.matrix:
+                weights.append(self.matrix[(u, v)])
+            elif (v, u) in self.matrix:
+                weights.append(self.matrix[(v, u)])
+            else:
+                score = self.co_test(u, v)
+                weights.append(score)
+        if weight:
+            g.es['weight'] = weights
+            self.parts = louvain.find_partition(g, method='Modularity', weight='weight')
+        else:
+            self.parts = louvain.find_partition(g, method='Modularity')
 
 
 class Graph:

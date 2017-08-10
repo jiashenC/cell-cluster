@@ -11,3 +11,12 @@ class Log:
 
     def update(self):
         self.pre = time.time()
+
+
+def output(step, data):
+    print "*****************************************************"
+    print
+    print step
+    print data
+    print "*****************************************************"
+    print
