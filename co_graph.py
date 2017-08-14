@@ -6,6 +6,8 @@ from scipy.spatial.distance import euclidean
 import igraph as ig
 import louvain
 from log import output
+import Queue
+import threading
 
 
 class CoGraph:
@@ -13,33 +15,73 @@ class CoGraph:
     def __init__(self, data):
         self.pq = []
         self.data = data
+        self.data_length = len(data)
         self.matrix = {}
         self.graph = None
         self.parts = None
+        self.queue = Queue.Queue()
+        self.rqueue = Queue.Queue()
+        self.test_threshold = 0
+        self.finish = False
 
-    def co_test(self, i, j):
+    def co_test_single(self, i, j):
         left = self.data[i].astype(bool)
         right = self.data[j].astype(bool)
         k = np.count_nonzero(np.bitwise_and(left, right))
         prb = hypergeom.cdf(k, len(left), np.count_nonzero(left), np.count_nonzero(right))
         return 1 - prb
 
-    def eu_test(self, i, j):
+    def eu_test_single(self, i, j):
         return euclidean(self.data[i], self.data[j])
 
+    def co_test(self):
+        while True:
+            i, j = self.queue.get()
+            left = self.data[i].astype(bool)
+            right = self.data[j].astype(bool)
+            k = np.count_nonzero(np.bitwise_and(left, right))
+            prb = hypergeom.cdf(k, len(left), np.count_nonzero(left), np.count_nonzero(right))
+            if 1 - prb < self.test_threshold:
+                self.rqueue.put((i, j))
+            if i == self.data_length - 2:
+                self.finish = True
+                self.rqueue.put((-1, -1))
+                break
+
+    def eu_test(self):
+        while True:
+            i, j = self.queue.get()
+            if euclidean(self.data[i], self.data[j]) < self.test_threshold:
+                self.rqueue.put((i, j))
+            if i == self.data_length - 2:
+                self.finish = True
+                self.rqueue.put((-1, -1))
+                break
+
     def build_graph(self, threshold=0.05, jaccard=False, jaccard_threshold=0.5, mode='hypergeometry'):
+        self.test_threshold = threshold
+        if mode == 'hypergeometry':
+            threading.Thread(target=self.co_test).start()
+        else:
+            threading.Thread(target=self.eu_test).start()
+
+        threading.Thread(target=self.add_test).start()
+
         self.graph = Graph()
-        count = 0
-        length = len(self.data)
-        for i in range(0, length):
-            for j in range(i + 1, length):
-                co_score = self.co_test(i, j) if mode == 'hypergeometry' else self.eu_test(i, j)
-                count += 1
-                if co_score < threshold:
-                    self.graph.add(i, j)
+        while not self.finish:
+            i, j = self.rqueue.get()
+            if i < 0:
+                break
+            self.graph.add(i, j)
+
         output('after ' + mode + ' edge: ', len(self.graph.edges))
         if jaccard:
             self.jaccard_preprocess(jaccard_threshold)
+
+    def add_test(self):
+        for i in range(0, self.data_length):
+            for j in range(i + 1, self.data_length):
+                self.queue.put((i, j))
 
     # use BFS to give jaccard score to each pair and non-direct connected pairs
     def jaccard_preprocess(self, threshold):
@@ -95,7 +137,7 @@ class CoGraph:
 
         output('after jaccard', len(self.graph.edges))
 
-    def find_partition(self, weight=True):
+    def find_partition(self, weight=True, mode='hypergeometry'):
         g = ig.Graph(list(self.graph.edges))
         # use hyper geometry test as edge weights
         weights = []
@@ -105,7 +147,7 @@ class CoGraph:
             elif (v, u) in self.matrix:
                 weights.append(self.matrix[(v, u)])
             else:
-                score = self.co_test(u, v)
+                score = self.co_test_single(u, v) if mode == 'hypergeometry' else self.eu_test_single(u, v)
                 weights.append(score)
         if weight:
             g.es['weight'] = weights
