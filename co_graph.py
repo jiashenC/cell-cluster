@@ -35,6 +35,10 @@ class CoGraph:
         return euclidean(self.data[i], self.data[j])
 
     def co_test(self):
+        """
+        :return:
+        multithreading feature for calculating hypergeometry score
+        """
         while True:
             i, j = self.queue.get()
             left = self.data[i].astype(bool)
@@ -42,6 +46,7 @@ class CoGraph:
             k = np.count_nonzero(np.bitwise_and(left, right))
             prb = hypergeom.cdf(k, len(left), np.count_nonzero(left), np.count_nonzero(right))
             if 1 - prb < self.test_threshold:
+                self.matrix.update({(i, j): 1 - prb})
                 self.rqueue.put((i, j))
             if i == self.data_length - 2:
                 self.finish = True
@@ -49,9 +54,15 @@ class CoGraph:
                 break
 
     def eu_test(self):
+        """
+        :return:
+        mutithreading feature for calculating euclidean test
+        """
         while True:
             i, j = self.queue.get()
-            if euclidean(self.data[i], self.data[j]) < self.test_threshold:
+            score = euclidean(self.data[i], self.data[j])
+            if score < self.test_threshold:
+                self.matrix.update({(i, j): score})
                 self.rqueue.put((i, j))
             if i == self.data_length - 2:
                 self.finish = True
@@ -59,6 +70,15 @@ class CoGraph:
                 break
 
     def build_graph(self, threshold=0.05, jaccard=False, jaccard_threshold=0.5, mode='hypergeometry'):
+        """
+        :param threshold: threshold for data preprocessing
+        :param jaccard: if running jaccard
+        :param jaccard_threshold: jaccard threshold
+        :param mode: ways of calculating preprocessing score
+        :return:
+        initialize multithreading ways of building graph. start preprocessing score and get result from
+        queue for building graph. process graph by using jaccard.
+        """
         self.test_threshold = threshold
         if mode == 'hypergeometry':
             threading.Thread(target=self.co_test).start()
@@ -89,7 +109,6 @@ class CoGraph:
         test_edge_list = set([])
         test_vertices_list = set([])
         queue = deque([])
-        count = 0
         for x in self.graph.vertices:
             queue.append(x)
             break
@@ -98,7 +117,6 @@ class CoGraph:
             if cur in test_vertices_list:
                 continue
 
-            count += 1
             test_vertices_list.add(cur)
             neighbors = self.graph.vertices_matrix[cur]
             for node in neighbors:
@@ -109,7 +127,6 @@ class CoGraph:
                 if node not in test_vertices_list:
                     queue.append(node)
                 score = dis.jaccard(self.graph.vertices_matrix[cur], self.graph.vertices_matrix[node])
-                self.matrix.update({(cur, node): score})
                 if score < threshold:
                     self.graph.vertices_matrix[cur].remove(node)
                     self.graph.vertices_matrix[node].remove(cur)
@@ -125,7 +142,6 @@ class CoGraph:
                         continue
                     test_edge_list.add((cur, second_node))
                     second_score = dis.jaccard(self.graph.vertices_matrix[cur], self.graph.vertices_matrix[second_node])
-                    self.matrix.update({(cur, second_node): second_score})
                     if second_score > threshold:
                         self.graph.vertices_matrix[cur].append(second_node)
                         self.graph.vertices_matrix[second_node].append(cur)
@@ -147,8 +163,8 @@ class CoGraph:
             elif (v, u) in self.matrix:
                 weights.append(self.matrix[(v, u)])
             else:
-                score = self.co_test_single(u, v) if mode == 'hypergeometry' else self.eu_test_single(u, v)
-                weights.append(score)
+                weight = self.eu_test_single(u, v) if mode != 'hypergeometry' else self.co_test_single(u, v)
+                weights.append(weight)
         if weight:
             g.es['weight'] = weights
             self.parts = louvain.find_partition(g, method='Modularity', weight='weight')
@@ -160,7 +176,7 @@ class Graph:
     def __init__(self):
         # [y, x, ...]
         self.vertices = set([])
-        # [(u,v), (x, y) ... ]
+        # [(u, v), (x, y) ... ]
         self.edges = set([])
         # u -> [x, y .. ]
         self.vertices_matrix = {}
